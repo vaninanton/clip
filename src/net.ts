@@ -1,4 +1,4 @@
-import {joinRoom} from 'trystero'
+import {getRelaySockets, joinRoom} from 'trystero'
 import type {JsonValue} from 'trystero'
 import {normalizeDevice, type Device} from './devices'
 
@@ -17,8 +17,12 @@ export type NetHandlers = {
   onPeerJoin: (peerId: string) => void
 }
 
+export type RelayState = {url: string; readyState: number; open: boolean}
+
 export type Net = {
   peers: () => Map<string, Device>
+  /** Состояние подключений к сигнальным релеям — для диагностики. */
+  relays: () => RelayState[]
   sendText: (message: TextMessage, target?: string) => Promise<void>
   sendFile: (header: FileHeader, blob: Blob, options?: SendFileOptions) => Promise<void>
   leave: () => Promise<void>
@@ -115,6 +119,10 @@ export async function connect(secret: string, me: Device, handlers: NetHandlers)
 
   return {
     peers: () => new Map(peers),
+    relays: () =>
+      Object.entries(getRelaySockets() as Record<string, {readyState: number}>).map(
+        ([url, socket]) => ({url, readyState: socket.readyState, open: socket.readyState === 1})
+      ),
     sendText: (message, target) => text.send(message, target === undefined ? {} : {target}),
     sendFile: async (header, blob, options = {}) => {
       const buffer = await blob.arrayBuffer()

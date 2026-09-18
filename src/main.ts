@@ -6,6 +6,7 @@ import {createUI, type Status} from './ui'
 import {randomRoomName} from './words'
 
 const COPIED_MS = 1400
+const DEBUG = new URLSearchParams(location.search).has('debug')
 
 const me = detectDevice()
 
@@ -169,6 +170,18 @@ async function open(): Promise<void> {
   net = created
   for (const peerId of pendingHistory.splice(0)) void pushHistory(created, peerId)
   render()
+
+  if (DEBUG) {
+    Object.assign(window, {__clip: {state, net: () => net, relays: () => created.relays()}})
+    window.setTimeout(() => {
+      const relays = created.relays()
+      const open = relays.filter(relay => relay.open)
+      console.info(
+        `релеи: открыто ${open.length} из ${relays.length}`,
+        relays.map(relay => `${relay.open ? '+' : '-'} ${relay.url}`)
+      )
+    }, 6000)
+  }
 }
 
 /** Пир пришёл позже — отдаём ему то, что мы уже отправляли в эту комнату. */

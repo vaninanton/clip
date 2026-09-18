@@ -6,68 +6,47 @@
   браузер А ─────── WebRTC, прямой канал ─────── браузер Б
       │         (текст и файлы идут только тут)        │
       │                                                │
-      └──── wss ──► relay.clip.gocpa.ru ◄──── wss ─────┘
-                 знакомство: SDP и ICE-кандидаты
+      └── wss ──► clip.gocpa.ru/relay ◄──── wss ───────┘
+               знакомство: SDP и ICE-кандидаты
 
-  сама страница: clip.gocpa.ru → GitHub Pages
+  страница: clip.gocpa.ru  ← тот же контейнер, тот же порт
 ```
+
+Всё приложение — один контейнер на `gocpa-jump.servers.gocpa.mx`. Внутри
+один процесс Node: отдаёт собранную страницу и на пути `/relay` держит
+сигнальный вебсокет. TLS снимает nginx на хосте.
 
 Три вещи, которые важно держать в голове:
 
-- **Содержимое буфера не проходит ни через Pages, ни через релей.** Pages отдаёт
-  статику, релей помогает браузерам найти друг друга. Дальше канал прямой.
+- **Содержимое буфера через сервер не проходит.** Он отдаёт статику и
+  помогает браузерам найти друг друга. Дальше канал прямой.
 - **Релей видит только шифротекст.** Имя комнаты служит паролем, которым
   trystero шифрует SDP, а на сервер уходит лишь SHA-256 от него.
-- **Свой релей понадобился не для приватности, а из-за корпоративной сети:**
-  из RDP-сессий публичные Nostr-релеи недоступны.
+- **Один домен вместо двух — сознательно.** Из RDP-сессий корпоративная сеть
+  не пускает на публичные Nostr-релеи. Чем меньше имён нужно провести через
+  прокси, тем меньше шансов упереться в запрет, поэтому страница и релей
+  живут на одном адресе.
+
+Адрес релея нигде не прописан: приложение выводит его из собственного
+origin (`wss://<текущий хост>/relay`). Поэтому одна и та же сборка работает
+и на `localhost:8080`, и на `clip.gocpa.ru`, и где угодно ещё.
 
 ## DNS
 
-Обе записи уже внесены в ClouDNS:
-
 | Имя | Тип | Значение |
 |---|---|---|
-| `clip.gocpa.ru` | CNAME | `vaninanton.github.io.` |
-| `relay.clip.gocpa.ru` | A | `213.148.1.78` |
+| `clip.gocpa.ru` | A | `213.148.1.78` |
 
 Домен `gocpa.ru` обслуживает wildcard `*.gocpa.ru → 146.185.194.210`, поэтому
-обе записи обязаны быть явными: без них имена уезжают на wildcard.
+запись обязана быть явной: без неё имя уезжает на wildcard.
 
-## 1. Приложение на GitHub Pages
+> Если `clip.gocpa.ru` осталась записью типа CNAME на `vaninanton.github.io`
+> со времён GitHub Pages — её нужно заменить на A-запись, приведённую выше.
 
-Деплой автоматический: `.github/workflows/deploy.yml` срабатывает на push
-в `main` и вручную через `workflow_dispatch`. Внутри — `npm ci`,
-`npm run build` (он же прогоняет `tsc --noEmit`), выгрузка `public/`
-как артефакта Pages и `deploy-pages`.
-
-Что настроено один раз и руками:
-
-1. **Settings → Pages → Source: GitHub Actions.** Без этого сборка пройдёт,
-   а деплой упадёт на последнем шаге.
-2. **Enforce HTTPS** — включается после того, как Let's Encrypt выпустит
-   сертификат на домен; обычно занимает несколько минут после первого деплоя.
-
-Домен задаётся файлом `static/CNAME`. Vite копирует содержимое `static/`
-в сборку как есть, поэтому `CNAME` попадает в артефакт при каждом деплое —
-иначе Pages забывал бы привязку домена.
-
-> **Порядок важен.** Пушить `CNAME` раньше, чем готовы записи DNS, нельзя:
-> Pages начнёт редиректить `vaninanton.github.io/clip/` на `clip.gocpa.ru`,
-> и приложение станет недоступно по обоим адресам.
-
-Локально то же самое: `npm run build` складывает сборку в `public/`, откуда
-её отдаёт valet на `https://clipboard.test`. Каталог `public/` намеренно
-исключён из репозитория — его содержимое собирается заново и здесь, и в CI.
-
-## 2. Релей на gocpa-jump.servers.gocpa.mx
+## Развёртывание
 
 Сервер: `213.148.1.78`, Debian 13, nginx 1.30 на портах 80/443, docker,
-certbot 4. Node в системе нет и не нужен — релей живёт в контейнере.
-
-Исходники лежат в каталоге `relay/` этого репозитория и раскладываются
-на сервер клонированием, чтобы обновление сводилось к `git pull`.
-
-### Установка
+certbot 4. Node в системе не нужен — он внутри образа.
 
 ```sh
 ssh gocpa-jump.servers.gocpa.mx
@@ -76,16 +55,17 @@ ssh gocpa-jump.servers.gocpa.mx
 sudo git clone https://github.com/vaninanton/clip.git /opt/clip
 
 # Хостовая конвенция — compose-проекты в /etc/docker/containers/<имя>/
-sudo ln -s /opt/clip/relay /etc/docker/containers/clip-relay
+sudo ln -s /opt/clip /etc/docker/containers/clip
 
-# Сборка и запуск
-cd /etc/docker/containers/clip-relay
+cd /etc/docker/containers/clip
 sudo docker compose up -d --build
 sudo docker compose ps
 ```
 
-Контейнер слушает `127.0.0.1:8080` и наружу не смотрит: TLS и апгрейд
-вебсокета снимает nginx.
+Образ собирается в два этапа: сначала `npm ci` и `npm run build` для
+фронтенда (заодно прогоняется `tsc --noEmit`, так что на сломанных типах
+сборка не пройдёт), затем рантайм только с сервером и готовой статикой.
+Контейнер слушает `127.0.0.1:8080` и наружу не смотрит.
 
 ### Сертификат и nginx
 
@@ -93,71 +73,78 @@ sudo docker compose ps
 который ссылается на несуществующие файлы:
 
 ```sh
-sudo certbot certonly --nginx -d relay.clip.gocpa.ru
+sudo certbot certonly --nginx -d clip.gocpa.ru
 
-sudo cp /opt/clip/relay/nginx.conf /etc/nginx/conf.d/relay.clip.gocpa.ru.conf
+sudo cp /opt/clip/deploy/nginx.conf /etc/nginx/conf.d/clip.gocpa.ru.conf
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
 ### Проверка
 
-Обычный `GET` вебсокет-сервер отвергает, поэтому проверяем настоящим
-рукопожатием:
-
 ```sh
+# Страница
+curl -sS -o /dev/null -w '%{http_code}\n' https://clip.gocpa.ru
+
+# Релей: обычный GET вебсокет-сервер отвергает, нужен настоящий хендшейк
 curl -sS -i -N \
   -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
   -H 'Sec-WebSocket-Version: 13' \
   -H "Sec-WebSocket-Key: $(head -c16 /dev/urandom | base64)" \
-  https://relay.clip.gocpa.ru | head -1
+  https://clip.gocpa.ru/relay | head -1
 ```
 
-Ожидаемый ответ — `HTTP/1.1 101 Switching Protocols`. Всё остальное
-означает, что до контейнера не дошли: смотрите
-`/var/log/nginx/clip-relay.error.log`.
+Ожидаемое: `200` для страницы и `HTTP/1.1 101 Switching Protocols` для
+релея. Всё остальное — смотрите `/var/log/nginx/clip.error.log`.
 
-## 3. Переключение приложения на свой релей
+## Обновление
 
-Пока приложение ходит через публичные Nostr-релеи. Переключение — правка
-в `src/net.ts`:
+Автодеплоя нет, выкладка ручная:
 
-```ts
-import {joinRoom} from '@trystero-p2p/ws-relay'
-
-const room = joinRoom(
-  {
-    appId: APP_ID,
-    password: secret,
-    relayConfig: {urls: ['wss://relay.clip.gocpa.ru']}
-  },
-  await roomIdFor(secret)
-)
+```sh
+sudo git -C /opt/clip pull
+sudo docker compose -f /etc/docker/containers/clip/docker-compose.yml up -d --build
 ```
 
-плюс `npm i @trystero-p2p/ws-relay` в корне проекта.
+Сертификат продлевает системный таймер certbot. Блок на 80-м порту в
+`deploy/nginx.conf` оставлен именно для этого: он отдаёт
+`/.well-known/acme-challenge/` и редиректит всё остальное на HTTPS.
 
-> **Чем платим.** Стратегия в trystero выбирается на сборку. Перейдя на свой
-> релей, приложение теряет 28 публичных Nostr-релеев с их избыточностью:
-> ляжет наш — встанет всё. `urls` принимает список, поэтому страховка —
-> второй инстанс на другом хосте.
+## Локальный запуск
+
+Самый честный способ — тот же контейнер:
+
+```sh
+docker compose up --build   # http://localhost:8080
+```
+
+`localhost` браузер считает защищённым контекстом, поэтому `crypto.subtle`
+и WebRTC работают без сертификата.
+
+Без Docker то же самое собирается руками:
+
+```sh
+npm ci && npm run build
+cd server && npm ci && cd ..
+STATIC_ROOT=$PWD/public node server/index.mjs
+```
+
+Для работы над интерфейсом годится `npm run dev`, но там нет релея —
+устройства не найдут друг друга. Если нужен и dev-сервер, и связь,
+укажите адрес релея явно:
+
+```sh
+VITE_RELAY_URL=ws://localhost:8080/relay npm run dev
+```
 
 ## Эксплуатация
 
 ```sh
-# Логи релея
-sudo docker compose -f /etc/docker/containers/clip-relay/docker-compose.yml logs -f
-
-# Обновление после изменений в репозитории
-sudo git -C /opt/clip pull
-sudo docker compose -f /etc/docker/containers/clip-relay/docker-compose.yml up -d --build
+# Логи приложения
+sudo docker compose -f /etc/docker/containers/clip/docker-compose.yml logs -f
 
 # Логи nginx
-sudo tail -f /var/log/nginx/clip-relay.{access,error}.log
+sudo tail -f /var/log/nginx/clip.{access,error}.log
 ```
-
-Сертификат продлевает системный таймер certbot. Блок на 80-м порту в
-`nginx.conf` оставлен именно для этого: он отдаёт `/.well-known/acme-challenge/`
-и редиректит всё остальное на HTTPS.
 
 ## Диагностика
 
@@ -168,13 +155,24 @@ https://clip.gocpa.ru/?debug#имя-комнаты
 ```
 
 Через шесть секунд после входа в комнату в консоль печатается сводка вида
-`релеи: открыто 3 из 4` со списком адресов, а в `window.__clip` появляются
-состояние приложения и функция `relays()`. В обычном режиме ничего этого нет.
+`релеи: открыто 1 из 1`, а в `window.__clip` появляются состояние приложения
+и функция `relays()`. В обычном режиме ничего этого нет.
 
 Как читать результат:
 
-- **ни одного открытого релея** — сигналинг перекрыт, устройства физически
-  не могут узнать друг о друге. Это тот случай, ради которого поднимался
-  свой релей.
-- **релеи открыты, но второе устройство не появляется** — знакомство прошло,
-  а прямой канал через NAT не встаёт. Релей здесь не поможет, нужен TURN.
+- **релей не открыт** — вебсокет до `/relay` не дошёл. Виноват либо nginx
+  (проверьте заголовки `Upgrade`), либо сеть между браузером и сервером.
+- **релей открыт, но второе устройство не появляется** — знакомство прошло,
+  а прямой канал через NAT не встаёт. Релей тут не поможет, нужен TURN.
+
+## Что осталось незакрытым
+
+**Единственная точка отказа.** Раньше приложение опиралось на 28 публичных
+Nostr-релеев, теперь — на один наш. Ляжет сервер — встанет всё. Страховка,
+если понадобится: `relayConfig.urls` принимает список, так что второй
+инстанс на другом хосте (вот тут поддомен как раз уместен) подключается
+без переделок.
+
+**TURN.** Если в корпоративной сети прямой канал WebRTC не встанет, одного
+релея будет мало. На этом же хосте разворачивается coturn, но сначала стоит
+убедиться, что проблема действительно в этом, — см. раздел о диагностике.

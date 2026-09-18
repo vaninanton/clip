@@ -1,0 +1,14 @@
+# Наружу контейнер не смотрит: TLS снимает nginx на clip.gocpa.ru,
+# сюда приходит уже расшифрованный HTTP.
+services:
+  clip:
+    build: .
+    container_name: clip
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:8080:8080'
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'

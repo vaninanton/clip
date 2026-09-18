@@ -1,0 +1,13 @@
+{
+  "name": "clip-server",
+  "private": true,
+  "type": "module",
+  "description": "Отдаёт собранную страницу и держит сигнальный релей на одном порту",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "@trystero-p2p/ws-relay": "^0.25.4",
+    "sirv": "^3.0.2"
+  }
+}

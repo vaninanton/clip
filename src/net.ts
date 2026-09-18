@@ -1,8 +1,16 @@
-import {getRelaySockets, joinRoom} from 'trystero'
-import type {JsonValue} from 'trystero'
+import {getRelaySockets, joinRoom} from '@trystero-p2p/ws-relay'
+import type {JsonValue} from '@trystero-p2p/ws-relay'
 import {normalizeDevice, type Device} from './devices'
 
 const APP_ID = 'vanton-clipboard'
+
+// Релей живёт на том же адресе, что и страница, поэтому настраивать
+// его не нужно: адрес выводится из текущего origin. Переопределение
+// через VITE_RELAY_URL нужно только для локальной разработки,
+// когда страницу отдаёт vite dev server, а релей — контейнер.
+const RELAY_URL: string =
+  import.meta.env['VITE_RELAY_URL'] ??
+  `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/relay`
 const UNKNOWN: Device = {os: 'other', browser: 'other'}
 
 export type TextMessage = {id: string; at: number; body: string}
@@ -73,7 +81,10 @@ function readHeader(data: unknown): FileHeader | null {
 }
 
 export async function connect(secret: string, me: Device, handlers: NetHandlers): Promise<Net> {
-  const room = joinRoom({appId: APP_ID, password: secret}, await roomIdFor(secret))
+  const room = joinRoom(
+    {appId: APP_ID, password: secret, relayConfig: {urls: [RELAY_URL]}},
+    await roomIdFor(secret)
+  )
   const peers = new Map<string, Device>()
   const publish = (): void => handlers.onPeersChange(new Map(peers))
   const deviceOf = (peerId: string): Device => peers.get(peerId) ?? UNKNOWN

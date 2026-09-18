@@ -4,11 +4,9 @@ export default defineConfig({
   // Относительные пути к ассетам: одинаково работает и на valet в корне домена,
   // и на GitHub Pages, где проект живёт в подкаталоге /clip/.
   base: './',
-  // Каталог public занят результатом сборки (его отдаёт valet), поэтому
-  // статика лежит в static/ — оттуда Vite копирует её в сборку как есть.
-  // Там же CNAME: без него GitHub Pages забывает привязанный домен
-  // при каждом деплое.
-  publicDir: 'static',
+  // Каталог public занят результатом сборки, поэтому штатный publicDir
+  // отключён — иначе Vite попытался бы копировать сам в себя.
+  publicDir: false,
   build: {
     outDir: 'public',
     emptyOutDir: true,

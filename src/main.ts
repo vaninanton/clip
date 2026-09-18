@@ -2,6 +2,7 @@ import './styles.css'
 import {connect, type FileHeader, type Net} from './net'
 import {detectDevice, type Device} from './devices'
 import {isFile, isText, newId, type Entry, type FileEntry, type TextEntry} from './entries'
+import {initFavicon, markUnread} from './favicon'
 import {createUI, type Status} from './ui'
 import {randomRoomName} from './words'
 
@@ -131,6 +132,7 @@ async function open(): Promise<void> {
         state.entries.unshift({
           id: message.id, at: message.at, mine: false, device, kind: 'text', body: message.body
         })
+        markUnread()
         render()
       },
       onFileProgress: (header, percent, device) => {
@@ -147,6 +149,8 @@ async function open(): Promise<void> {
         entry.progress = null
         entry.speed = null
         speedMarks.delete(entry.id)
+        // Бейджик ставим по готовому файлу, а не по каждому проценту.
+        markUnread()
         render()
       },
       onPeerJoin: peerId => {
@@ -338,6 +342,7 @@ window.addEventListener('hashchange', () => {
   render()
 })
 
+initFavicon()
 document.getElementById('app')?.replaceChildren(ui.root)
 writeHash()
 render()
